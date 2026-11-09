@@ -1,0 +1,42 @@
+# Flatpak for the desktop app. GNOME runtime ships GTK 4 and WebKitGTK 6.
+# Build: flatpak-builder --user --install build-dir packaging/flatpak/community.stremiolan.StremioLan.yml
+id: community.stremiolan.StremioLan
+runtime: org.gnome.Platform
+runtime-version: '48'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.golang
+command: stremio-lan-desktop
+finish-args:
+  - --share=network          # the server Stremio connects to, and LAN scanning
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  - --talk-name=org.kde.StatusNotifierWatcher   # tray icon
+  - --persist=.stremio-lan                      # settings.json
+  - --filesystem=~/.ssh:ro                      # SFTP key login
+  - --filesystem=xdg-videos:ro                  # Folder sources
+  - --filesystem=/media:ro
+  - --filesystem=/run/media:ro
+  - --filesystem=/mnt:ro
+build-options:
+  append-path: /usr/lib/sdk/golang/bin
+  env:
+    CGO_ENABLED: '1'
+    GOTOOLCHAIN: auto   # fetches the Go version go.mod needs if the SDK's is older
+  build-args:
+    - --share=network   # Go modules; fine for CI bundles, not for Flathub
+modules:
+  - name: stremio-lan
+    buildsystem: simple
+    build-commands:
+      - go build -tags desktop -trimpath -ldflags "-s -w -X main.version=${VERSION:-0.0.0}" -o stremio-lan-desktop .
+      - install -Dm755 stremio-lan-desktop /app/bin/stremio-lan-desktop
+      - install -Dm644 build/appicon.png /app/share/icons/hicolor/512x512/apps/${FLATPAK_ID}.png
+      - install -Dm644 deploy/stremio-lan.desktop /app/share/applications/${FLATPAK_ID}.desktop
+      - sed -i "s/^Icon=.*/Icon=${FLATPAK_ID}/" /app/share/applications/${FLATPAK_ID}.desktop
+    sources:
+      - type: dir
+        path: ../..
+        skip: [.git, web/node_modules, dist, build/AppDir, .flatpak-builder, stremio-lan, stremio-lan-desktop]

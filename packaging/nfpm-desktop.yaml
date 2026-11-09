@@ -1,0 +1,29 @@
+# Desktop app package (deb/rpm), amd64. Uses the system's GTK 4 and WebKitGTK 6.
+name: stremio-lan-desktop
+arch: amd64
+platform: linux
+version: ${VERSION}
+version_schema: semver
+section: video
+priority: optional
+maintainer: zeeshan <zeet2020@gmail.com>
+description: |
+  Desktop app for Stremio LAN Library: serves videos from DLNA, SMB, WebDAV and SFTP
+  servers on your network to Stremio, with a native window and tray icon.
+homepage: https://github.com/${GITHUB_REPOSITORY}
+license: MIT
+overrides:
+  deb:
+    depends: [libgtk-4-1, libwebkitgtk-6.0-4]
+  rpm:
+    depends: [gtk4, webkitgtk6.0]
+contents:
+  - src: ./stremio-lan-desktop
+    dst: /usr/bin/stremio-lan-desktop
+    file_info: { mode: 0755 }
+  - src: ./deploy/stremio-lan.desktop
+    dst: /usr/share/applications/stremio-lan.desktop
+  - src: ./build/appicon.png
+    dst: /usr/share/icons/hicolor/512x512/apps/stremio-lan.png
+  - src: ./LICENSE
+    dst: /usr/share/doc/stremio-lan-desktop/LICENSE

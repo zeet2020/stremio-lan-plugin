@@ -1,0 +1,28 @@
+# Headless service package (deb/rpm). Static binary, no GUI dependencies:
+# suits servers and Raspberry Pis. Built per arch: ARCH=amd64|arm64|arm7.
+name: stremio-lan
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+version_schema: semver
+section: video
+priority: optional
+maintainer: zeeshan <zeet2020@gmail.com>
+description: |
+  Stremio LAN Library: serves videos, music and playlists from DLNA, SMB,
+  WebDAV and SFTP servers and local folders to Stremio, with a web control
+  panel on port 7070. Runs as a locked-down systemd service.
+homepage: https://github.com/${GITHUB_REPOSITORY}
+license: MIT
+contents:
+  - src: ./build/pkg/stremio-lan   # staged per arch by the release workflow
+    dst: /usr/bin/stremio-lan
+    file_info: { mode: 0755 }
+  - src: ./packaging/stremio-lan.service
+    dst: /usr/lib/systemd/system/stremio-lan.service
+  - src: ./LICENSE
+    dst: /usr/share/doc/stremio-lan/LICENSE
+scripts:
+  postinstall: ./packaging/postinstall.sh
+  preremove: ./packaging/preremove.sh
+  postremove: ./packaging/postremove.sh

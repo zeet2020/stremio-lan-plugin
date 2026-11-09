@@ -1,0 +1,12 @@
+# build outputs
+/stremio-lan
+/stremio-lan-desktop
+/stremio-lan-desktop.exe
+/dist/
+/build/pkg/
+/build/AppDir/
+/build/appimagetool
+*.syso
+*.snap
+*.flatpak
+.flatpak-builder/

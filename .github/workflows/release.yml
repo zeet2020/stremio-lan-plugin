@@ -1,0 +1,170 @@
+name: Release
+
+# Push a tag like v1.2.3 to build everything and publish a GitHub Release.
+# Run it by hand (Actions → Release → Run workflow) to just build artifacts.
+#
+#   Desktop app: Linux binary (tar.gz), AppImage, Windows .exe (zip)
+#   Service:     .deb and .rpm (amd64, arm64, armhf) with the systemd unit,
+#                plus the plain Linux binaries
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GO_LDFLAGS: -s -w
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - id: v
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then v="${GITHUB_REF_NAME#v}"; else v="0.0.0-dev.${GITHUB_SHA::7}"; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+  # The control panel, built once and embedded in every binary.
+  web:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: cd web && npm ci && npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+
+  # Service: static CGO-free binaries → deb + rpm with the systemd unit.
+  service:
+    needs: [version, web]
+    runs-on: ubuntu-24.04
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build binaries
+        run: |
+          mkdir -p dist
+          build() { CGO_ENABLED=0 GOOS=linux GOARCH=$1 GOARM=$2 go build -trimpath -ldflags "$GO_LDFLAGS -X main.version=$VERSION" -o "dist/stremio-lan-linux-$3" .; }
+          build amd64 "" amd64
+          build arm64 "" arm64
+          build arm   7  arm7
+      - name: deb + rpm
+        run: |
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+          mkdir -p build/pkg
+          for arch in amd64 arm64 arm7; do
+            cp "dist/stremio-lan-linux-$arch" build/pkg/stremio-lan   # nfpm doesn't expand vars in src paths
+            for fmt in deb rpm; do ARCH=$arch nfpm package -f packaging/nfpm-service.yaml -p $fmt -t dist/; done
+          done
+          ls -la dist
+      - name: Check a package
+        run: |
+          deb=$(ls dist/stremio-lan_*_amd64.deb)
+          dpkg-deb -c "$deb" | grep -q usr/lib/systemd/system/stremio-lan.service
+          dpkg-deb -I "$deb" | grep -q prerm   # stops the service on uninstall
+          sudo apt-get install -y "./$deb"
+          systemd-analyze verify /usr/lib/systemd/system/stremio-lan.service
+          sudo systemctl start stremio-lan
+          for i in $(seq 20); do curl -fs localhost:7070/health && break; sleep 0.5; done
+          curl -fs localhost:7070/health | grep -q ok
+          sudo apt-get remove -y stremio-lan
+          if systemctl is-active --quiet stremio-lan; then echo "still running after uninstall"; exit 1; fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: service
+          path: dist/*
+
+  # Desktop app on Linux: binary tarball + AppImage (GTK 4 / WebKitGTK 6 from the host).
+  linux-desktop:
+    needs: [version, web]
+    runs-on: ubuntu-24.04
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: GTK 4 / WebKitGTK 6 dev packages
+        run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
+      - name: Build
+        run: CGO_ENABLED=1 go build -tags desktop -trimpath -ldflags "$GO_LDFLAGS -X main.version=$VERSION" -o stremio-lan-desktop .
+      - name: Package
+        run: |
+          mkdir -p dist
+          tar -czf "dist/stremio-lan-desktop-$VERSION-linux-amd64.tar.gz" stremio-lan-desktop deploy/stremio-lan.desktop build/appicon.png LICENSE
+          packaging/appimage.sh
+          ls -la dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-desktop
+          path: dist/*
+
+  # Desktop app on Windows: Wails uses WebView2 here, no CGO needed.
+  windows-desktop:
+    needs: [version, web]
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build
+        shell: bash
+        run: |
+          go install github.com/tc-hib/go-winres@latest
+          go-winres simply --icon build/appicon.png --manifest gui --product-name "Stremio LAN Library" \
+            --file-version "${VERSION%%-*}" --product-version "${VERSION%%-*}"
+          CGO_ENABLED=0 go build -tags desktop -trimpath -ldflags "$GO_LDFLAGS -H windowsgui -X main.version=$VERSION" -o stremio-lan-desktop.exe .
+          mkdir -p dist
+          7z a "dist/stremio-lan-desktop-$VERSION-windows-amd64.zip" stremio-lan-desktop.exe LICENSE
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-desktop
+          path: dist/*
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [service, linux-desktop, windows-desktop]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+          pattern: '{service,linux-desktop,windows-desktop}'
+      - run: cd dist && sha256sum * > SHA256SUMS && ls -la
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

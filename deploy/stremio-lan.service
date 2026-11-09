@@ -1,0 +1,21 @@
+[Unit]
+Description=DLNA to Stremio add-on
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=pi
+WorkingDirectory=/home/pi/Public/stremio-lan
+ExecStart=/home/pi/Public/stremio-lan/stremio-lan
+Environment=BIND_ADDRESS=192.168.0.101
+Environment=PORT=7070
+# Environment=DLNA_SERVERS=http://192.168.0.50:8200/rootDesc.xml
+# Environment=ROOT_OBJECT_ID=64
+# Environment=SMB_USER=me SMB_PASS=secret
+# Environment=SMB_DISCOVER=0
+# Sources, toggles and logins set in the web UI live in ~/.stremio-lan/settings.json
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

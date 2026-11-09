@@ -1,0 +1,38 @@
+# Snap for the desktop app (strict confinement, gnome extension = GTK 4 + WebKitGTK 6).
+name: stremio-lan
+base: core24
+adopt-info: app
+summary: Serve videos from your LAN (DLNA, SMB, WebDAV, SFTP) to Stremio
+description: |
+  Stremio LAN Library finds DLNA and SMB servers on your network, lets you add WebDAV
+  and SFTP servers, and serves their videos to Stremio as an add-on. Native
+  window with a tray icon; the server keeps running when the window is closed.
+
+  Note: inside the snap, SFTP key login can't read ~/.ssh; use a password.
+  Folder sources can read your home folder; for USB disks run
+  "snap connect stremio-lan:removable-media".
+grade: stable
+confinement: strict
+license: MIT
+
+apps:
+  stremio-lan:
+    command: bin/stremio-lan-desktop
+    desktop: meta/gui/stremio-lan.desktop
+    extensions: [gnome]
+    plugs: [network, network-bind, home, removable-media]
+
+parts:
+  app:
+    plugin: nil
+    source: .
+    build-snaps: [go/latest/stable]
+    build-environment:
+      - CGO_ENABLED: "1"
+      - GOTOOLCHAIN: auto
+    override-pull: |
+      craftctl default
+      craftctl set version="$(git describe --tags --always 2>/dev/null | sed 's/^v//')"
+    override-build: |
+      go build -tags desktop -trimpath -ldflags "-s -w -X main.version=$(craftctl get version)" \
+        -o "$CRAFT_PART_INSTALL/bin/stremio-lan-desktop" .

@@ -1,0 +1,26 @@
+# systemd unit shipped in the deb/rpm. (deploy/stremio-lan.service is the
+# hand-install variant for a Pi user account.)
+[Unit]
+Description=Stremio LAN Library: DLNA/SMB/WebDAV/SFTP videos for Stremio
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/stremio-lan
+DynamicUser=yes
+StateDirectory=stremio-lan
+Environment=HOME=/var/lib/stremio-lan
+Environment=SETTINGS_FILE=/var/lib/stremio-lan/settings.json
+# Override with: systemctl edit stremio-lan
+Environment=PORT=7070
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+# read-only so Folder sources under /home work; files must be world-readable
+# (DynamicUser has no groups). /media and /mnt are readable as usual.
+ProtectHome=read-only
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

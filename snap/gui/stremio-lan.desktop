@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Stremio LAN Library
+Comment=Serve videos from DLNA, SMB, WebDAV and SFTP servers to Stremio
+Exec=stremio-lan
+Icon=${SNAP}/meta/gui/stremio-lan.png
+Terminal=false
+Categories=AudioVideo;Video;Network;
