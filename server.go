@@ -102,27 +102,37 @@ func setup() {
 	loadLibrary(filepath.Join(filepath.Dir(settingsFile), "library.db"))
 }
 
-// serve starts scanning and the HTTP server(s), returning the control panel URL.
-// If the port can't be bound (e.g. the service already runs on this machine),
-// it returns the error with the URL of whatever is listening there.
-func serve() (string, error) {
-	port := strconv.Itoa(cfg.Port)
+// selfURL is how this machine reaches its own HTTP server.
+func selfURL() string {
 	host := "127.0.0.1"
 	if ip := net.ParseIP(cfg.Bind); ip != nil && !ip.IsUnspecified() {
 		host = cfg.Bind
 	}
-	panel := "http://" + net.JoinHostPort(host, port) + "/"
+	return "http://" + net.JoinHostPort(host, strconv.Itoa(cfg.Port))
+}
 
-	ln, err := net.Listen("tcp", net.JoinHostPort(cfg.Bind, port))
+// newServer limits how long a client may take to send its request headers
+// and to sit idle between requests. No write timeout: a stream runs for hours.
+func newServer(h http.Handler) *http.Server {
+	return &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute}
+}
+
+// serve starts scanning and the HTTP server(s), returning the control panel URL.
+// If the port can't be bound (e.g. the service already runs on this machine),
+// it returns the error with the URL of whatever is listening there.
+func serve() (string, error) {
+	panel := selfURL() + "/"
+	ln, err := net.Listen("tcp", net.JoinHostPort(cfg.Bind, strconv.Itoa(cfg.Port)))
 	if err != nil {
 		return panel, err
 	}
 	go scheduler()
+	genThumbs() // finish thumbnails a restart interrupted
 	h := routes()
 	if cfg.HTTPSPort > 0 {
 		go serveTLS(h)
 	}
 	log.Printf("listening on http://%s", ln.Addr())
-	go func() { log.Fatal(http.Serve(ln, h)) }()
+	go func() { log.Fatal(newServer(h).Serve(ln)) }()
 	return panel, nil
 }

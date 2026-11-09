@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -21,6 +22,10 @@ import (
 //     token: /{token}/manifest.json, /{token}/stream/..., /{token}/file/...
 
 const sessionCookie = "stremio_lan_session"
+
+// passwordMu: password checks run one at a time, each failure holding it a
+// second, so guessing is ~1 try a second however many requests are sent.
+var passwordMu sync.Mutex
 
 func randomHex(n int) string {
 	b := make([]byte, n)
@@ -137,8 +142,13 @@ func authRoutes(mux *http.ServeMux) {
 			return
 		}
 		hash := getSettings().PasswordHash
-		if hash == "" || bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)) != nil {
-			time.Sleep(time.Second) // slow down guessing; bcrypt adds more
+		passwordMu.Lock()
+		ok := hash != "" && bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)) == nil
+		if !ok {
+			time.Sleep(time.Second)
+		}
+		passwordMu.Unlock()
+		if !ok {
 			http.Error(w, "wrong password", http.StatusUnauthorized)
 			return
 		}
@@ -154,8 +164,13 @@ func authRoutes(mux *http.ServeMux) {
 		if !readJSON(w, r, &req) || !validPassword(w, req.New) {
 			return
 		}
-		if bcrypt.CompareHashAndPassword([]byte(getSettings().PasswordHash), []byte(req.Current)) != nil {
+		passwordMu.Lock()
+		ok := bcrypt.CompareHashAndPassword([]byte(getSettings().PasswordHash), []byte(req.Current)) == nil
+		if !ok {
 			time.Sleep(time.Second)
+		}
+		passwordMu.Unlock()
+		if !ok {
 			http.Error(w, "current password is wrong", http.StatusForbidden)
 			return
 		}

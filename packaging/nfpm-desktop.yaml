@@ -12,6 +12,7 @@ description: |
   servers on your network to Stremio, with a native window and tray icon.
 homepage: https://github.com/${GITHUB_REPOSITORY}
 license: MIT
+suggests: [ffmpegthumbnailer, ffmpeg] # optional: Settings → Generate thumbnails
 overrides:
   deb:
     depends: [libgtk-4-1, libwebkitgtk-6.0-4]

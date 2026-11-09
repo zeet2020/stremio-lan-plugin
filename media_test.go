@@ -60,7 +60,7 @@ func TestParseTorrent(t *testing.T) {
 	if m.InfoHash != hash || len(m.Files) != 3 || m.Files[2].Name != "Breaking.Bad.S01E02.mkv" || m.Files[2].Index != 2 || len(m.Trackers) != 2 {
 		t.Fatalf("parsed %+v", m)
 	}
-	for _, bad := range []string{"", "d", "not a torrent", "d4:infoi1ee", "l" + strings.Repeat("l", 100)} {
+	for _, bad := range []string{"", "d", "not a torrent", "d4:infoi1ee", "l" + strings.Repeat("l", 100), string(b[:len(b)-1])} { // last: cut short
 		if _, err := parseTorrent([]byte(bad)); err == nil {
 			t.Errorf("parseTorrent(%q) accepted", bad)
 		}
@@ -195,5 +195,21 @@ func TestAudioTorrentPlaylist(t *testing.T) {
 	}
 	if cleanKinds(nil) != nil || cleanKinds([]string{"video", "audio", "playlist"}) != nil {
 		t.Error("defaults should be stored as nil")
+	}
+}
+
+func TestSampleFilter(t *testing.T) {
+	for name, want := range map[string]string{
+		"Movie.2019.sample.mkv":   "",
+		"sample-movie.mkv":        "",
+		"Sample.mkv":              "",
+		"Movie (SAMPLE).mp4":      "",
+		"The.Sampler.2019.mkv":    "video",
+		"Free.Samples.2023.mkv":   "video",
+		"Examples.Of.Sampled.mp4": "video",
+	} {
+		if got := classify(name, 1<<30); got != want {
+			t.Errorf("classify(%q) = %q, want %q", name, got, want)
+		}
 	}
 }

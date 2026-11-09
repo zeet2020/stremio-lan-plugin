@@ -22,6 +22,18 @@ type davEntry struct {
 	Stamp string
 }
 
+// sameHost: a and b are the same server (scheme, host, port; "https://h" and
+// "https://h:443" are the same).
+func sameHost(a, b *url.URL) bool {
+	port := func(u *url.URL) string {
+		if p := u.Port(); p != "" {
+			return p
+		}
+		return map[string]string{"http": "80", "https": "443"}[strings.ToLower(u.Scheme)]
+	}
+	return strings.EqualFold(a.Scheme, b.Scheme) && strings.EqualFold(a.Hostname(), b.Hostname()) && port(a) == port(b)
+}
+
 // propfind lists the direct children of a WebDAV collection.
 func propfind(u *url.URL, l Login) ([]davEntry, error) {
 	req, _ := http.NewRequest("PROPFIND", u.String(), strings.NewReader(propfindBody))
@@ -60,6 +72,9 @@ func propfind(u *url.URL, l Login) ([]davEntry, error) {
 		h, err := u.Parse(strings.TrimSpace(r.Href)) // hrefs are usually absolute paths
 		if err != nil || strings.TrimSuffix(h.Path, "/") == strings.TrimSuffix(u.Path, "/") {
 			continue // the collection itself
+		}
+		if !sameHost(h, u) {
+			continue // another server: the login would go there when scanned or played
 		}
 		e := davEntry{URL: h, Name: path.Base(h.Path)}
 		for _, ps := range r.Propstat {

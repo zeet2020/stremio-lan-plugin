@@ -114,6 +114,18 @@ export const getDesktop = async (): Promise<DesktopPrefs> => {
   return { quitOnClose: !!p.quitOnClose, startHidden: !!p.startHidden, autostart: !!p.autostart }
 }
 export const setDesktop = (p: DesktopPrefs) => request('/api/desktop', p)
+/** Library options. tool: the program thumbnails are made with, "" if none is installed. */
+export interface LibraryPrefs {
+  thumbnails: boolean
+  tool: '' | 'ffmpegthumbnailer' | 'ffmpeg'
+  thumbCount: number
+  thumbDir: string // where thumbnails are saved
+  thumbDirDefault: string
+}
+export const getLibrary = async (): Promise<LibraryPrefs> => (await request('/api/library')).json()
+/** Send either field alone; thumbDir "" means the default folder. */
+export const setLibrary = (p: { thumbnails?: boolean; thumbDir?: string }) => request('/api/library', p)
+export const clearThumbs = () => request('/api/library/clear-thumbs', {})
 export const getStatus = async (): Promise<Status> => (await request('/api/status')).json()
 export const rescan = () => request('/rescan', {})
 export const browse = async (c: Conn, path: string): Promise<Listing> => (await request('/api/browse', { ...c, path })).json()

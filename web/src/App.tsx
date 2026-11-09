@@ -17,10 +17,8 @@ import {
   Drawer,
   Group,
   Loader,
-  Modal,
   Paper,
   PasswordInput,
-  ScrollArea,
   SegmentedControl,
   SimpleGrid,
   Stack,
@@ -32,8 +30,9 @@ import {
   UnstyledButton,
   useMantineColorScheme,
   type MantineColorScheme,
+  Tabs,
 } from '@mantine/core'
-import { useDisclosure } from '@mantine/hooks'
+import { useDisclosure, useMediaQuery } from '@mantine/hooks'
 import {
   browse,
   changePassword,
@@ -43,6 +42,10 @@ import {
   logout,
   newToken,
   getDesktop,
+  getLibrary,
+  clearThumbs,
+  setLibrary,
+  type LibraryPrefs,
   setDesktop,
   type DesktopPrefs,
   inDesktopApp,
@@ -99,6 +102,7 @@ const Icon = {
   plus: svg(<path d="M12 5v14M5 12h14" />),
   close: svg(<path d="M6 6l12 12M18 6L6 18" />, 14),
   chevron: svg(<path d="M9 6l6 6-6 6" />, 14),
+  up: svg(<path d="M12 19V5M5 12l7-7 7 7" />),
   folder: svg(<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />, 15),
   alert: svg(<><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16h.01" /></>),
 }
@@ -603,12 +607,23 @@ export type ExplorerTarget = { conn: Conn; folders: Folder[]; step: 'connect' | 
 const isInside = (kind: Kind, a: string, p: string) =>
   kind !== 'dlna' && a !== p && (a === '' || p.startsWith(a.endsWith('/') ? a : a + '/'))
 
+// pickName is a chosen folder's last part ("Movies" for /mnt/nas/Movies, or
+// "Shows" for "Videos / Shows"): long paths read better as name + path below.
+const pickName = (f: Folder) => (f.label || f.path || '/').split(/[/\\]| \/ /).filter(Boolean).pop() ?? '/'
+
 // Mounted fresh for each target (keyed by the caller), so state starts from it.
+// A wide side panel (not a modal): browse on the left, the folders picked so
+// far on the right with Save always in reach; one column on a phone.
 function Explorer({ target, onClose, onSaved }: { target: ExplorerTarget; onClose: () => void; onSaved: () => void }) {
   const [conn, setConn] = useState<Conn>(target.conn)
   const [step, setStep] = useState<'connect' | 'browse'>(target.step)
-  const [stack, setStack] = useState([{ name: target.conn.name || target.conn.addr || 'This machine', path: '' }])
+  const [stack, setStackState] = useState([{ name: target.conn.name || target.conn.addr || 'This machine', path: '' }])
+  const [filter, setFilter] = useState('')
   const [sel, setSel] = useState<Folder[]>(target.folders)
+  const setStack = (st: typeof stack) => {
+    setFilter('') // a new folder: start unfiltered
+    setStackState(st)
+  }
 
   const cur = stack[stack.length - 1] ?? { name: '', path: '' }
   const hostKey = conn.id ?? conn.kind + conn.addr
@@ -643,13 +658,17 @@ function Explorer({ target, onClose, onSaved }: { target: ExplorerTarget; onClos
     )
   const isNew = !conn.id
   const needsLogin = conn.kind === 'smb' || conn.kind === 'webdav' || conn.kind === 'sftp'
+  const entries = (list.data?.entries ?? []).filter((e) => e.name.toLowerCase().includes(filter.trim().toLowerCase()))
 
   return (
-    <Modal
+    <Drawer
       opened
       onClose={onClose}
-      size="lg"
+      position="right"
+      size={step === 'connect' ? 'min(560px, 100%)' : 'min(1040px, 100%)'} // wide once browsing
       title={<PanelTitle tag={step === 'connect' ? '1/2' : '2/2'}>{step === 'connect' ? 'Connect' : `Choose folders · ${stack[0]?.name ?? ''}`}</PanelTitle>}
+      overlayProps={{ backgroundOpacity: 0.45, blur: 2 }}
+      styles={{ content: { display: 'flex', flexDirection: 'column' }, body: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' } }}
     >
       {step === 'connect' ? (
         <form
@@ -681,6 +700,7 @@ function Explorer({ target, onClose, onSaved }: { target: ExplorerTarget; onClos
                 onChange={(e) => setConn({ ...conn, addr: e.currentTarget.value })}
                 placeholder={PLACEHOLDER[conn.kind]}
                 styles={mono}
+                data-autofocus
               />
             )}
             {needsLogin && (
@@ -708,117 +728,148 @@ function Explorer({ target, onClose, onSaved }: { target: ExplorerTarget; onClos
           </Stack>
         </form>
       ) : (
-        <Stack gap="sm">
-          <Breadcrumbs separator="›" style={{ flexWrap: 'wrap' }}>
-            {stack.map((s, i) => (
-              <Anchor key={i} component="button" type="button" size="sm" onClick={() => setStack(stack.slice(0, i + 1))} fw={i === stack.length - 1 ? 700 : 400}>
-                {s.name}
-              </Anchor>
-            ))}
-          </Breadcrumbs>
-          {list.isError ? (
-            <>
-              <ErrorAlert>{list.error.message}</ErrorAlert>
-              {isNew && needsLogin && (
-                <Button variant="default" onClick={() => setStep('connect')}>
-                  Back: check the address and login
-                </Button>
-              )}
-            </>
-          ) : (
-            <>
-              {hereSelectable && (
-                <Checkbox
-                  label={
-                    <Text size="sm">
-                      Scan this folder{' '}
-                      <Text span c="dimmed" size="sm">
-                        ({list.data ? `${list.data.videos} media files here, plus subfolders` : '…'})
-                      </Text>
-                    </Text>
-                  }
-                  checked={chosen(here) || included(here)}
-                  disabled={included(here) || !list.data}
-                  onChange={() =>
-                    toggle(here, atTop ? (conn.kind === 'dlna' ? 'Everything' : here || '/') : byPath ? here : stack.slice(1).map((s) => s.name).join(' / '))
-                  }
-                />
-              )}
-              <ScrollArea.Autosize mah={340} type="auto" offsetScrollbars>
-                {list.isPending ? (
-                  <Center py="lg">
-                    <Loader size="sm" />
-                  </Center>
-                ) : list.data.entries.length === 0 ? (
-                  <Text size="sm" c="dimmed" py="sm">
-                    No subfolders.
-                  </Text>
-                ) : (
-                  <Stack gap={2}>
-                    {list.data.entries.map((e) => (
-                      <Group key={e.path} wrap="nowrap" gap="xs" className="explorer-row">
-                        <Checkbox
-                          aria-label={`Scan ${e.name}`}
-                          checked={chosen(e.path) || included(e.path)}
-                          disabled={included(e.path)}
-                          onChange={() => toggle(e.path, labelFor(e.name, e.path))}
-                        />
-                        <UnstyledButton style={{ flex: 1, minWidth: 0 }} onClick={() => setStack([...stack, { name: e.name, path: e.path }])}>
-                          <Group gap={6} wrap="nowrap">
-                            <Text c="dimmed" lh={1}>{Icon.folder}</Text>
-                            <Text size="sm" style={{ overflowWrap: 'anywhere' }}>{e.name}</Text>
-                            <Text c="dimmed" lh={1} ml="auto">{Icon.chevron}</Text>
-                          </Group>
-                        </UnstyledButton>
-                      </Group>
-                    ))}
-                  </Stack>
-                )}
-              </ScrollArea.Autosize>
-            </>
-          )}
-          <Box>
-            <Eyebrow>Folders to scan ({sel.length})</Eyebrow>
-            {sel.length === 0 ? (
-              <Text size="sm" c="dimmed" mt={4}>None yet: tick folders above. Nothing is scanned until you do.</Text>
-            ) : (
-              <Stack gap={6} mt={6}>
-                {sel.map((f) => (
-                  <Group key={f.path} wrap="nowrap" gap="xs" className="explorer-row" align="flex-start">
-                    <Text c="dimmed" lh={1} mt={3}>{Icon.folder}</Text>
-                    <Box style={{ flex: 1, minWidth: 0 }}>
-                      <Text size="sm" fw={600} style={{ overflowWrap: 'anywhere' }}>
-                        {f.label || f.path || '/'}
-                      </Text>
-                      <Box mt={4}>
-                        <KindChips
-                          value={f.kinds ?? DEFAULT_KINDS}
-                          onChange={(kinds) => setSel(sel.map((x) => (x.path === f.path ? { ...x, kinds } : x)))}
-                        />
-                      </Box>
-                    </Box>
-                    <CloseButton size="sm" onClick={() => setSel(sel.filter((x) => x.path !== f.path))} aria-label={`Remove ${f.label}`} />
-                  </Group>
+        <div className="explorer">
+          {/* left: where you are, its subfolders */}
+          <div>
+            <Group gap="xs" wrap="nowrap">
+              <Tooltip label="Up one folder">
+                <ActionIcon variant="default" disabled={atTop} onClick={() => setStack(stack.slice(0, -1))} aria-label="Up one folder">
+                  {Icon.up}
+                </ActionIcon>
+              </Tooltip>
+              <Breadcrumbs separator="›" style={{ flexWrap: 'wrap', minWidth: 0 }}>
+                {stack.map((s, i) => (
+                  <Anchor key={i} component="button" type="button" size="sm" onClick={() => setStack(stack.slice(0, i + 1))} fw={i === stack.length - 1 ? 700 : 400}>
+                    {s.name}
+                  </Anchor>
                 ))}
-              </Stack>
-            )}
-          </Box>
-          {save.isError && <ErrorAlert>{save.error.message}</ErrorAlert>}
-          <Group justify="space-between">
-            {isNew && needsLogin ? (
-              <Button variant="subtle" color="gray" onClick={() => setStep('connect')}>
-                Back
-              </Button>
+              </Breadcrumbs>
+            </Group>
+            {list.isError ? (
+              <>
+                <ErrorAlert>{list.error.message}</ErrorAlert>
+                {isNew && needsLogin && (
+                  <Button variant="default" onClick={() => setStep('connect')}>
+                    Back: check the address and login
+                  </Button>
+                )}
+              </>
             ) : (
-              <span />
+              <>
+                {hereSelectable && (
+                  <Paper withBorder p="xs" radius="sm">
+                    <Checkbox
+                      label={
+                        <Text size="sm" fw={600}>
+                          Scan this folder{' '}
+                          <Text span c="dimmed" size="sm" fw={400}>
+                            ({list.data ? `${list.data.videos} media files here, plus subfolders` : '…'})
+                          </Text>
+                        </Text>
+                      }
+                      checked={chosen(here) || included(here)}
+                      disabled={included(here) || !list.data}
+                      onChange={() =>
+                        toggle(here, atTop ? (conn.kind === 'dlna' ? 'Everything' : here || '/') : byPath ? here : stack.slice(1).map((s) => s.name).join(' / '))
+                      }
+                    />
+                  </Paper>
+                )}
+                {(list.data?.entries.length ?? 0) > 8 && (
+                  <TextInput
+                    size="xs"
+                    placeholder={`Filter ${list.data!.entries.length} folders…`}
+                    value={filter}
+                    onChange={(e) => setFilter(e.currentTarget.value)}
+                    rightSection={filter && <CloseButton size="xs" onClick={() => setFilter('')} aria-label="Clear filter" />}
+                    aria-label="Filter folders"
+                  />
+                )}
+                <div className="explorer-scroll">
+                  {list.isPending ? (
+                    <Center py="lg">
+                      <Loader size="sm" />
+                    </Center>
+                  ) : entries.length === 0 ? (
+                    <Text size="sm" c="dimmed" py="sm">
+                      {filter ? 'No folders match.' : 'No subfolders.'}
+                    </Text>
+                  ) : (
+                    <Stack gap={2}>
+                      {entries.map((e) => (
+                        <Group key={e.path} wrap="nowrap" gap="xs" className="explorer-row">
+                          <Checkbox
+                            aria-label={`Scan ${e.name}`}
+                            checked={chosen(e.path) || included(e.path)}
+                            disabled={included(e.path)}
+                            onChange={() => toggle(e.path, labelFor(e.name, e.path))}
+                          />
+                          <UnstyledButton style={{ flex: 1, minWidth: 0 }} onClick={() => setStack([...stack, { name: e.name, path: e.path }])} aria-label={`Open ${e.name}`}>
+                            <Group gap={6} wrap="nowrap">
+                              <Text c="dimmed" lh={1}>{Icon.folder}</Text>
+                              <Text size="sm" style={{ overflowWrap: 'anywhere' }}>{e.name}</Text>
+                              <Text c="dimmed" lh={1} ml="auto">{Icon.chevron}</Text>
+                            </Group>
+                          </UnstyledButton>
+                        </Group>
+                      ))}
+                    </Stack>
+                  )}
+                </div>
+              </>
             )}
-            <Button onClick={() => save.mutate()} loading={save.isPending} disabled={list.isError && isNew}>
-              {isNew ? 'Save and scan' : 'Save'}
-            </Button>
-          </Group>
-        </Stack>
+          </div>
+
+          {/* right: picked so far, Save always visible */}
+          <div className="explorer-picks">
+            <Eyebrow>Folders to scan ({sel.length})</Eyebrow>
+            <div className="explorer-scroll">
+              {sel.length === 0 ? (
+                <Text size="sm" c="dimmed">Tick folders on the left. Nothing is scanned until you do.</Text>
+              ) : (
+                <Stack gap={6}>
+                  {sel.map((f) => (
+                    <Group key={f.path} wrap="nowrap" gap="xs" className="explorer-row" align="flex-start">
+                      <Text c="dimmed" lh={1} mt={3}>{Icon.folder}</Text>
+                      <Box style={{ flex: 1, minWidth: 0 }}>
+                        <Text size="sm" fw={600} style={{ overflowWrap: 'anywhere' }}>
+                          {pickName(f)}
+                        </Text>
+                        {pickName(f) !== (f.label || f.path || '/') && (
+                          <Text size="xs" c="dimmed" ff="monospace" style={{ overflowWrap: 'anywhere' }} title={f.label || f.path}>
+                            {f.label || f.path}
+                          </Text>
+                        )}
+                        <Box mt={4}>
+                          <KindChips
+                            value={f.kinds ?? DEFAULT_KINDS}
+                            onChange={(kinds) => setSel(sel.map((x) => (x.path === f.path ? { ...x, kinds } : x)))}
+                          />
+                        </Box>
+                      </Box>
+                      <CloseButton size="sm" onClick={() => setSel(sel.filter((x) => x.path !== f.path))} aria-label={`Remove ${f.label}`} />
+                    </Group>
+                  ))}
+                </Stack>
+              )}
+            </div>
+            {save.isError && <ErrorAlert>{save.error.message}</ErrorAlert>}
+            <Group justify="space-between">
+              {isNew && needsLogin ? (
+                <Button variant="subtle" color="gray" onClick={() => setStep('connect')}>
+                  Back
+                </Button>
+              ) : (
+                <span />
+              )}
+              <Button onClick={() => save.mutate()} loading={save.isPending} disabled={list.isError && isNew}>
+                {isNew ? 'Save and scan' : 'Save'}
+              </Button>
+            </Group>
+          </div>
+        </div>
       )}
-    </Modal>
+    </Drawer>
   )
 }
 
@@ -891,34 +942,149 @@ function ThemeSwitch({ size = 'sm', fullWidth }: { size?: 'xs' | 'sm'; fullWidth
   )
 }
 
+// Settings: vertical tabs down the left, one group at a time; tabs across
+// the top on a phone.
 function SettingsDrawer({ opened, onClose }: { opened: boolean; onClose: () => void }) {
+  const phone = useMediaQuery('(max-width: 48em)')
+  const tabs: { value: string; label: string; hint: string; body: ReactNode }[] = [
+    { value: 'library', label: 'Library', hint: 'Pictures for your videos in Stremio.', body: <LibrarySettings /> },
+    {
+      value: 'appearance',
+      label: 'Appearance',
+      hint: 'Saved in this browser.',
+      body: (
+        <>
+          <Text fw={650}>Theme</Text>
+          <ThemeSwitch fullWidth />
+        </>
+      ),
+    },
+    ...(inDesktopApp ? [{ value: 'desktop', label: 'Desktop app', hint: 'The window and the tray icon.', body: <DesktopSettings /> }] : []),
+    { value: 'password', label: 'Admin password', hint: 'Changing it logs out every other browser.', body: <AdminPassword /> },
+  ]
   return (
     <Drawer
       opened={opened}
       onClose={onClose}
       position="right"
-      size="md"
+      size="min(860px, 100%)"
       title={<PanelTitle tag="SYS">Settings</PanelTitle>}
       overlayProps={{ backgroundOpacity: 0.45, blur: 2 }}
     >
-      <Stack gap="xl">
-        <Stack gap="xs">
-          <Eyebrow>Appearance</Eyebrow>
+      <Tabs defaultValue="library" orientation={phone ? 'horizontal' : 'vertical'} variant="pills" keepMounted={false}>
+        <Tabs.List className="settings-tabs">
+          {tabs.map((t) => (
+            <Tabs.Tab key={t.value} value={t.value}>
+              {t.label}
+            </Tabs.Tab>
+          ))}
+        </Tabs.List>
+        {tabs.map((t) => (
+          <Tabs.Panel key={t.value} value={t.value} className="settings-panel">
+            <Stack gap="sm">
+              <div>
+                <Text fw={700} size="lg">{t.label}</Text>
+                <Text size="sm" c="dimmed">{t.hint}</Text>
+              </div>
+              {t.body}
+            </Stack>
+          </Tabs.Panel>
+        ))}
+      </Tabs>
+    </Drawer>
+  )
+}
+
+// Thumbnails: a frame of each video, made with ffmpegthumbnailer or ffmpeg after scans.
+function LibrarySettings() {
+  const qc = useQueryClient()
+  const prefs = useQuery({ queryKey: ['library'], queryFn: getLibrary })
+  const save = useMutation({
+    mutationFn: setLibrary,
+    onMutate: (patch) => qc.setQueryData(['library'], (p?: LibraryPrefs) => p && { ...p, ...patch }),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['library'] }),
+  })
+  const clear = useMutation({
+    mutationFn: clearThumbs,
+    onSettled: () => qc.invalidateQueries({ queryKey: ['library'] }),
+  })
+  const p = prefs.data
+  return (
+    <Stack gap="xs">
+      {prefs.isError && <ErrorAlert>{prefs.error.message}</ErrorAlert>}
+      {p && (
+        <Group justify="space-between" wrap="nowrap" gap="md" align="flex-start">
           <div>
-            <Text fw={650}>Theme</Text>
+            <Text fw={650}>Generate thumbnails</Text>
             <Text size="sm" c="dimmed">
-              Match your system, or always light or dark. Saved in this browser.
+              {p.tool
+                ? `After each scan, grab a frame of every video without a poster, so you can tell them apart in Stremio. The first run takes a while. Made with ${p.tool}.`
+                : 'Needs ffmpegthumbnailer or ffmpeg on the machine running this server (e.g. sudo apt install ffmpegthumbnailer).'}
             </Text>
           </div>
-          <ThemeSwitch fullWidth />
-        </Stack>
-        {inDesktopApp && <DesktopSettings />}
-        <Stack gap="xs">
-          <Eyebrow>Admin password</Eyebrow>
-          <AdminPassword />
-        </Stack>
+          <Switch
+            checked={p.thumbnails}
+            disabled={save.isPending || (!p.tool && !p.thumbnails)}
+            onChange={() => save.mutate({ thumbnails: !p.thumbnails })}
+            aria-label="Generate thumbnails"
+          />
+        </Group>
+      )}
+      {p && <ThumbFolder key={p.thumbDir} prefs={p} />}
+      {p && p.thumbCount > 0 && (
+        <Group justify="space-between" wrap="nowrap" gap="md">
+          <Text size="sm" c="dimmed">
+            {p.thumbCount} thumbnails saved.{p.thumbnails ? ' Clearing makes them again.' : ''}
+          </Text>
+          <Button variant="default" size="xs" loading={clear.isPending} onClick={() => clear.mutate()}>
+            Clear thumbnails
+          </Button>
+        </Group>
+      )}
+      {save.isError && <ErrorAlert>{save.error.message}</ErrorAlert>}
+      {clear.isError && <ErrorAlert>{clear.error.message}</ErrorAlert>}
+    </Stack>
+  )
+}
+
+// Where thumbnails are saved. Changing it starts fresh in the new folder; the
+// old one's thumbnails stay where they are.
+function ThumbFolder({ prefs }: { prefs: LibraryPrefs }) {
+  const qc = useQueryClient()
+  const [dir, setDir] = useState(prefs.thumbDir)
+  const save = useMutation({
+    mutationFn: (thumbDir: string) => setLibrary({ thumbDir }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['library'] }),
+  })
+  const isDefault = prefs.thumbDir === prefs.thumbDirDefault
+  const submit = (e: FormEvent) => {
+    e.preventDefault()
+    save.mutate(dir.trim() === prefs.thumbDirDefault ? '' : dir)
+  }
+  return (
+    <form onSubmit={submit}>
+      <Stack gap="xs">
+        <TextInput
+          label="Thumbnail folder"
+          description="A full path on the machine running this server. Files already in it are left alone."
+          value={dir}
+          onChange={(e) => setDir(e.currentTarget.value)}
+          placeholder={prefs.thumbDirDefault}
+          spellCheck={false}
+        />
+        <Group gap="xs" justify="flex-end">
+          {!isDefault && (
+            <Button variant="subtle" size="xs" disabled={save.isPending} onClick={() => save.mutate('')}>
+              Use default
+            </Button>
+          )}
+          <Button type="submit" variant="default" size="xs" loading={save.isPending} disabled={dir.trim() === prefs.thumbDir}>
+            Save folder
+          </Button>
+        </Group>
+        {save.isError && <ErrorAlert>{save.error.message}</ErrorAlert>}
       </Stack>
-    </Drawer>
+    </form>
   )
 }
 
@@ -942,7 +1108,6 @@ function DesktopSettings() {
     : []
   return (
     <Stack gap="xs">
-      <Eyebrow>Desktop app</Eyebrow>
       {prefs.isError && <ErrorAlert>{prefs.error.message}</ErrorAlert>}
       {rows.map((r) => (
         <Group key={r.key} justify="space-between" wrap="nowrap" gap="md" align="flex-start">
@@ -980,9 +1145,6 @@ function AdminPassword() {
   return (
     <form onSubmit={submit}>
       <Stack gap="sm">
-        <Text size="sm" c="dimmed">
-          Changing it logs out every other browser.
-        </Text>
         <PasswordInput label="Current" required autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.currentTarget.value)} />
         <PasswordInput label="New" required minLength={8} autoComplete="new-password" value={next} onChange={(e) => setNext(e.currentTarget.value)} />
         {change.isError && <ErrorAlert>{change.error.message}</ErrorAlert>}

@@ -135,4 +135,12 @@ func TestSFTP(t *testing.T) {
 	if code, _ := post(t, h, "/api/browse", `{"id":"`+host+`","path":"`+dir+`"}`); code != 502 {
 		t.Errorf("browse with mismatched key → %d, want 502", code)
 	}
+	// re-entering the password doesn't re-trust the swapped server
+	pinned := getSettings().Hosts[host].HostKey
+	if code, body := post(t, h, "/api/hosts", `{"id":"`+host+`","pass":"pw","folders":[{"path":"`+dir+`"}]}`); code != 400 || !strings.Contains(body, "host key changed") {
+		t.Errorf("re-save with changed key → %d %s", code, body)
+	}
+	if getSettings().Hosts[host].HostKey != pinned {
+		t.Error("re-save replaced the pinned host key")
+	}
 }

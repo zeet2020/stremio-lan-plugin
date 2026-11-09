@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -118,5 +119,52 @@ func TestWebDAVIncremental(t *testing.T) {
 	publish(rescanSource("webdav:" + base))
 	if hits := fake.reset(); len(hits) != 4 || movies() != 4 {
 		t.Fatalf("user rescan: %v, %d movies", hits, movies())
+	}
+}
+
+// A WebDAV listing pointing at another server is ignored: scanning or playing
+// it would send this server's login there.
+func TestWebDAVOtherHostSkipped(t *testing.T) {
+	var gotAuth sync.Map
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, _, ok := r.BasicAuth(); ok {
+			gotAuth.Store(r.URL.Path, true)
+		}
+	}))
+	defer other.Close()
+	dav := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusMultiStatus)
+		fmt.Fprintf(w, `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:">
+<d:response><d:href>/dav/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop></d:propstat></d:response>
+<d:response><d:href>/dav/Here.2019.mkv</d:href><d:propstat><d:prop><d:getcontentlength>10</d:getcontentlength></d:prop></d:propstat></d:response>
+<d:response><d:href>%[1]s/steal/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop></d:propstat></d:response>
+<d:response><d:href>%[1]s/steal/There.2019.mkv</d:href><d:propstat><d:prop><d:getcontentlength>10</d:getcontentlength></d:prop></d:propstat></d:response>
+</d:multistatus>`, other.URL)
+	}))
+	defer dav.Close()
+
+	u, _ := url.Parse(dav.URL + "/dav/")
+	entries, err := propfind(u, Login{User: "me", Pass: "secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name != "Here.2019.mkv" {
+		t.Errorf("entries %+v, want only the file on this server", entries)
+	}
+	gotAuth.Range(func(k, _ any) bool { t.Errorf("login sent to the other server: %v", k); return true })
+
+	if sameServer(must(url.Parse(other.URL+"/x.mkv")), dav.URL+"/dav/") || !sameServer(must(url.Parse(dav.URL+"/dav/a.mkv")), dav.URL+"/dav/") {
+		t.Error("sameServer wrong")
+	}
+	for a, want := range map[string]bool{
+		"https://webdav.example/x":      true,
+		"https://WebDAV.example:443/x":  true, // default port, any case
+		"http://webdav.example/x":       false,
+		"https://webdav.example:8443/x": false,
+		"https://evil.example/x":        false,
+	} {
+		if got := sameServer(must(url.Parse(a)), "https://webdav.example/"); got != want {
+			t.Errorf("sameServer(%s) = %v, want %v", a, got, want)
+		}
 	}
 }

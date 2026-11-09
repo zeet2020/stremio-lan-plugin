@@ -87,6 +87,7 @@ func runScan(id string, scan func() *Index) {
 	publish(idx)
 	scanning.Store(false)
 	scanningID.Store("")
+	genThumbs()
 }
 
 // publish makes idx current (minus anything switched off meanwhile) and saves it.

@@ -375,8 +375,9 @@ func (idx *Index) walkDLNA(srv *Server, root string, seen map[string]bool) error
 			}
 			seen[r.URL] = true
 			it := dlnaItem(srv, di, r)
+			it.Album = title
 			if audio {
-				it.Kind, it.Album = "audio", title
+				it.Kind = "audio"
 			}
 			if idx.kinds[itemKind(it)] {
 				idx.add(it)
@@ -702,6 +703,13 @@ func browse(h Host, p string, trustNewKey bool) (Listing, error) {
 	return out, nil
 }
 
+func needID(w http.ResponseWriter, id string) bool {
+	if id == "" {
+		http.Error(w, "id required", http.StatusBadRequest)
+	}
+	return id != ""
+}
+
 var (
 	errBadPath = errors.New("need a full path")
 	errBadKind = errors.New("unknown server type")
@@ -826,7 +834,7 @@ func hostRoutes(mux *http.ServeMux) {
 
 	mux.HandleFunc("POST /api/hosts/remove", requireAdmin(func(w http.ResponseWriter, r *http.Request) {
 		var q hostReq
-		if !readJSON(w, r, &q) || q.ID == "" {
+		if !readJSON(w, r, &q) || !needID(w, q.ID) {
 			return
 		}
 		saved(w, saveSettings(func(s *Settings) { delete(s.Hosts, q.ID) }))
@@ -859,7 +867,7 @@ func hostRoutes(mux *http.ServeMux) {
 	// Rescan a host, a folder ("host#path"), or just look for servers ("discover").
 	mux.HandleFunc("POST /api/sources/rescan", requireAdmin(func(w http.ResponseWriter, r *http.Request) {
 		var q hostReq
-		if !readJSON(w, r, &q) || q.ID == "" {
+		if !readJSON(w, r, &q) || !needID(w, q.ID) {
 			return
 		}
 		queue(q.ID)

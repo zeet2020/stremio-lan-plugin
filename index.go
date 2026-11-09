@@ -27,7 +27,7 @@ type Item struct {
 	FileIdx    int
 	Trackers   []string
 	Entries    []PlaylistEntry // playlist items
-	Album      string          // audio from DLNA: its container (files elsewhere use their folder)
+	Album      string          // DLNA: the container it was found in (audio: its album; files elsewhere use their folder)
 	Key        string          // sha1(serverUDN + resURL)[:12]
 	Server     string          // friendlyName
 	Title      string          // raw dc:title
@@ -85,6 +85,7 @@ type Index struct {
 	ByNorm      map[string][]*Item // normalized movie title → items
 	Built       time.Time
 	DAVStamps   map[string]string // WebDAV folder (base + path) → stamp at the last scan
+	nameCount   map[string]int    // movie title+year → how many movies share it (set by finish)
 	cur         string            // source being scanned; add() tags items with it
 	prev        *Index            // last index, for reusing unchanged WebDAV folders
 	incremental bool              // scheduled scan: skip WebDAV folders whose stamp didn't change
@@ -117,6 +118,41 @@ func (it *Item) location() string {
 		}
 	}
 	return ""
+}
+
+// folder is the item's folder, last two levels ("source1/encoded"), to tell
+// same-named files apart. DLNA: the container it was found in.
+func (it *Item) folder() string {
+	if it.Album != "" {
+		return it.Album
+	}
+	dir := path.Dir(strings.ReplaceAll(it.location(), "\\", "/"))
+	if dir == "." || dir == "/" {
+		return ""
+	}
+	if parent := path.Base(path.Dir(dir)); parent != "." && parent != "/" {
+		return parent + "/" + path.Base(dir)
+	}
+	return path.Base(dir)
+}
+
+func nameKey(it *Item) string {
+	return strings.ToLower(it.Parsed.Title) + "|" + strconv.Itoa(it.Parsed.Year)
+}
+
+// movieName is the title shown in Stremio. Movies sharing a title and year
+// (an original and its encode, say) get their folder added: "Wedding (encoded)".
+func (idx *Index) movieName(it *Item) string {
+	n := it.Parsed.Title
+	if n == "" {
+		n = it.Title
+	}
+	if idx.nameCount[nameKey(it)] > 1 {
+		if f := it.folder(); f != "" {
+			n += " (" + path.Base(f) + ")"
+		}
+	}
+	return n
 }
 
 // albumOf names an audio item's album: its folder.
@@ -155,6 +191,7 @@ func build(ctx context.Context, incremental bool) *Index {
 	}
 	idx.finish()
 	idx.Built = time.Now()
+	idx.prev = nil // only needed while scanning; kept, every index would hold all the old ones
 	log.Printf("scan: %d folders, %d items (%d movies, %d shows), %d servers on the network, in %s",
 		len(idx.Sources), len(idx.All), len(idx.Movies), len(idx.Shows), len(idx.Discovered), time.Since(start).Round(time.Millisecond))
 	return idx
@@ -205,6 +242,10 @@ func logSource(src Source, start time.Time) {
 }
 
 func (idx *Index) finish() {
+	idx.nameCount = map[string]int{}
+	for _, it := range idx.Movies {
+		idx.nameCount[nameKey(it)]++
+	}
 	sort.Slice(idx.Movies, func(i, j int) bool {
 		return strings.ToLower(idx.Movies[i].Parsed.Title) < strings.ToLower(idx.Movies[j].Parsed.Title)
 	})
@@ -306,6 +347,7 @@ var (
 	reSxxEy = regexp.MustCompile(`(?i)^(.*?)[\s\-\[\(]*\bs(\d{1,2})[\s.\-]?e(\d{1,3})`)
 	reNxNN  = regexp.MustCompile(`(?i)^(.*?)[\s\-\[\(]*\b(\d{1,2})x(\d{2,3})\b`)
 	reYear  = regexp.MustCompile(`^(.*)[\s(\[]+((?:19|20)\d{2})(?:[\s)\]]|$)`) // greedy: last year wins
+	reTags  = regexp.MustCompile(`^\s*(\[[^\]]*\]\s*)+`)                       // leading [site] / [group] tags
 	reJunk  = regexp.MustCompile(`(?i)\b(2160p|1080p|720p|480p|4k|uhd|hdr|bluray|bdrip|web[- ]?dl|webrip|hdtv|x264|x265|hevc|h\.?264|h\.?265|aac|dts|remux|proper|repack)\b`)
 )
 
@@ -317,7 +359,7 @@ func cleanTitle(s string) string {
 }
 
 func parse(name string) Parsed {
-	s := strings.TrimSpace(reSep.ReplaceAllString(name, " "))
+	s := strings.TrimSpace(reSep.ReplaceAllString(reTags.ReplaceAllString(name, ""), " "))
 	for _, re := range []*regexp.Regexp{reSxxEy, reNxNN} {
 		if m := re.FindStringSubmatch(s); m != nil {
 			se, _ := strconv.Atoi(m[2])

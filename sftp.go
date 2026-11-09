@@ -84,11 +84,16 @@ func knownKey(l Login) ssh.HostKeyCallback {
 	}
 }
 
-// probeSFTP checks a new source can log in and read its folder, and returns
-// the host key to trust from now on.
+// probeSFTP checks a source can log in and read its folder, and returns the
+// host key to trust from now on. A server already pinned (l.HostKey) must
+// still show that key, checked before the password is sent: new credentials
+// don't re-trust a swapped server.
 func probeSFTP(addr string, l Login) (string, error) {
 	var key ssh.PublicKey
 	c, root, err := sftpDial(addr, l, func(_ string, _ net.Addr, k ssh.PublicKey) error {
+		if l.HostKey != "" && base64.StdEncoding.EncodeToString(k.Marshal()) != l.HostKey {
+			return errors.New("the server's host key changed since it was added; if that's expected (server reinstalled), remove and re-add it")
+		}
 		key = k
 		return nil
 	})

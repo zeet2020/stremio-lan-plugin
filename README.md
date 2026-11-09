@@ -7,6 +7,8 @@ It reads your **DLNA servers, SMB/Samba shares, WebDAV, SFTP servers and local f
 - **LAN Movies** and **LAN Series** rows, plus your copy listed as a stream when you open the same title anywhere in Stremio.
 - **LAN Audio** (albums by folder) and **LAN Playlists** (`m3u`, `pls`).
 
+Optional: turn on **Settings → Generate thumbnails** (needs `ffmpegthumbnailer` or `ffmpeg`, e.g. `sudo apt install ffmpegthumbnailer`) to grab a frame of every video without a poster, so you can tell files apart in Stremio. Thumbnails are saved next to the settings unless you pick another folder there.
+
 Files play straight from your network. Nothing is uploaded anywhere. Nothing is scanned until you pick the folders.
 
 ## Install the service

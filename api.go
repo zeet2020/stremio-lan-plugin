@@ -39,6 +39,9 @@ type Settings struct {
 	SessionKey   string `json:"sessionKey,omitempty"`   // signs UI session cookies
 	AddonToken   string `json:"addonToken,omitempty"`   // secret path prefix for Stremio URLs
 
+	Thumbnails bool   `json:"thumbnails,omitempty"` // grab a frame of each video after scans (thumbs.go)
+	ThumbDir   string `json:"thumbDir,omitempty"`   // where thumbnails go; "" = thumbs/ next to this file
+
 	Desktop DesktopPrefs `json:"desktop,omitempty"` // desktop app only
 }
 
@@ -65,6 +68,8 @@ func getSettings() Settings {
 		PasswordHash: settings.PasswordHash,
 		SessionKey:   settings.SessionKey,
 		AddonToken:   settings.AddonToken,
+		Thumbnails:   settings.Thumbnails,
+		ThumbDir:     settings.ThumbDir,
 		Desktop:      settings.Desktop,
 	}
 }
@@ -105,8 +110,21 @@ func saveSettings(f func(*Settings)) error {
 	if err := os.MkdirAll(filepath.Dir(settingsFile), 0o700); err != nil {
 		return err
 	}
+	// Synced before the rename: a power cut (a Pi's SD card) leaves the old
+	// file or the new one, never an empty one the service can't start with.
 	tmp := settingsFile + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+	out, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err = out.Write(b); err == nil {
+		err = out.Sync()
+	}
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		os.Remove(tmp)
 		return err
 	}
 	return os.Rename(tmp, settingsFile)
@@ -125,6 +143,48 @@ func apiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /rescan", requireAdmin(func(w http.ResponseWriter, r *http.Request) {
 		queueRescan()
 		w.WriteHeader(http.StatusAccepted)
+	}))
+	mux.HandleFunc("GET /api/library", requireAdmin(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, obj{"thumbnails": thumbsOn(), "tool": thumbTool(), "thumbCount": thumbCount(),
+			"thumbDir": thumbDir(), "thumbDirDefault": defaultThumbDir()}, false)
+	}))
+	// Either field may be sent alone; thumbDir "" goes back to the default.
+	mux.HandleFunc("POST /api/library", requireAdmin(func(w http.ResponseWriter, r *http.Request) {
+		var p struct {
+			Thumbnails *bool
+			ThumbDir   *string
+		}
+		if !readJSON(w, r, &p) {
+			return
+		}
+		if p.ThumbDir != nil {
+			d, err := validThumbDir(*p.ThumbDir)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			*p.ThumbDir = d
+		}
+		err := saveSettings(func(s *Settings) {
+			if p.Thumbnails != nil {
+				s.Thumbnails = *p.Thumbnails
+			}
+			if p.ThumbDir != nil {
+				s.ThumbDir = *p.ThumbDir
+			}
+		})
+		if err == nil {
+			genThumbs()
+		}
+		saved(w, err)
+	}))
+	mux.HandleFunc("POST /api/library/clear-thumbs", requireAdmin(func(w http.ResponseWriter, r *http.Request) {
+		err := clearThumbs()
+		if errors.Is(err, errThumbsBusy) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		saved(w, err)
 	}))
 	hostRoutes(mux)
 	if desktopRoutes != nil {
@@ -245,7 +305,7 @@ func handleAPIStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 // sameOrigin rejects cross-site POSTs so a web page can't change settings
-// through a LAN visitor's browser. The API has no auth: keep it on the LAN.
+// through a logged-in admin's browser (on top of the SameSite cookie).
 func sameOrigin(r *http.Request) bool {
 	o := r.Header.Get("Origin")
 	if o == "" || r.Method == http.MethodGet || r.Method == http.MethodHead {

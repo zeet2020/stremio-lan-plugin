@@ -27,6 +27,8 @@ func routes() http.Handler {
 	mux.HandleFunc("GET /stream/{type}/{id}", handleStream)
 	mux.HandleFunc("GET /proxy/{key}", handleProxy) // GET pattern also matches HEAD
 	mux.HandleFunc("GET /file/{key}/{name}", handleFile)
+	mux.HandleFunc("GET /thumb/{file}", handleThumb)
+	mux.HandleFunc("GET /poster.png", handlePoster)
 
 	ui := http.NewServeMux()
 	ui.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
@@ -135,35 +137,49 @@ func handleManifest(w http.ResponseWriter, r *http.Request) {
 	}, false)
 }
 
-func movieMeta(it *Item) obj {
-	m := obj{"id": "lan:m:" + it.Key, "type": "movie", "name": it.Parsed.Title, "posterShape": "poster"}
-	if m["name"] == "" {
-		m["name"] = it.Title
+// setPoster uses the server's poster, else a generated thumbnail (a 16:9
+// frame, so shown landscape rather than cropped to a portrait poster), else a
+// drawn poster with the title in the meta's shape.
+func setPoster(m obj, base, poster, thumb, label string) {
+	switch {
+	case poster != "":
+		m["poster"] = poster
+	case thumb != "":
+		m["poster"], m["posterShape"], m["background"] = thumb, "landscape", thumb
+	default:
+		m["poster"] = fallbackURL(base, m["posterShape"].(string), m["name"].(string), label)
 	}
+}
+
+func movieMeta(idx *Index, base string, it *Item) obj {
+	m := obj{"id": "lan:m:" + it.Key, "type": "movie", "name": idx.movieName(it), "posterShape": "poster"}
 	if it.Parsed.Year > 0 {
 		m["releaseInfo"] = strconv.Itoa(it.Parsed.Year)
 	}
-	if it.Poster != "" {
-		m["poster"] = it.Poster
+	label := "Movie"
+	if it.Parsed.Year > 0 {
+		label = strconv.Itoa(it.Parsed.Year)
 	}
+	setPoster(m, base, it.Poster, thumbURL(base, it), label)
 	return m
 }
 
-func albumMeta(al *Album) obj {
+func albumMeta(base string, al *Album) obj {
 	m := obj{"id": "lan:a:" + al.Key, "type": "other", "name": al.Name, "posterShape": "square",
 		"description": fmt.Sprintf("%d tracks · %s", len(al.Tracks), al.Tracks[0].Server)}
-	for _, t := range al.Tracks {
-		if t.Poster != "" {
-			m["poster"] = t.Poster
-			break
-		}
+	poster := ""
+	if i := slices.IndexFunc(al.Tracks, func(t *Item) bool { return t.Poster != "" }); i >= 0 {
+		poster = al.Tracks[i].Poster
 	}
+	setPoster(m, base, poster, "", "Album")
 	return m
 }
 
-func playlistMeta(pl *Item) obj {
-	return obj{"id": "lan:p:" + pl.Key, "type": "other", "name": pl.Title, "posterShape": "square",
+func playlistMeta(base string, pl *Item) obj {
+	m := obj{"id": "lan:p:" + pl.Key, "type": "other", "name": pl.Title, "posterShape": "square",
 		"description": fmt.Sprintf("Playlist · %d entries · %s", len(pl.Entries), pl.Server)}
+	setPoster(m, base, "", "", "Playlist")
+	return m
 }
 
 func showPoster(sh *Show) string {
@@ -177,16 +193,39 @@ func showPoster(sh *Show) string {
 	return ""
 }
 
-func showMeta(sh *Show) obj {
-	m := obj{"id": "lan:s:" + sh.Slug, "type": "series", "name": sh.Name, "posterShape": "poster"}
-	if p := showPoster(sh); p != "" {
-		m["poster"] = p
+// episodeKeys is the show's (season, episode) pairs in order.
+func episodeKeys(sh *Show) [][2]int {
+	keys := make([][2]int, 0, len(sh.Episodes))
+	for k := range sh.Episodes {
+		keys = append(keys, k)
 	}
+	sort.Slice(keys, func(i, j int) bool {
+		return keys[i][0] < keys[j][0] || keys[i][0] == keys[j][0] && keys[i][1] < keys[j][1]
+	})
+	return keys
+}
+
+// episodeThumb is the generated thumbnail of an episode's first file.
+func episodeThumb(base string, sh *Show, k [2]int) string {
+	if eps := sh.Episodes[k]; len(eps) > 0 {
+		return thumbURL(base, eps[0])
+	}
+	return ""
+}
+
+func showMeta(base string, sh *Show) obj {
+	m := obj{"id": "lan:s:" + sh.Slug, "type": "series", "name": sh.Name, "posterShape": "poster"}
+	thumb := ""
+	if keys := episodeKeys(sh); len(keys) > 0 {
+		thumb = episodeThumb(base, sh, keys[0])
+	}
+	setPoster(m, base, showPoster(sh), thumb, "Series")
 	return m
 }
 
 func handleCatalog(w http.ResponseWriter, r *http.Request) {
 	idx := current.Load()
+	base := addonBase(r)
 	q, _ := url.ParseQuery(pathID(r, "extra"))
 	search := strings.ToLower(q.Get("search"))
 	skip, _ := strconv.Atoi(q.Get("skip"))
@@ -197,7 +236,7 @@ func handleCatalog(w http.ResponseWriter, r *http.Request) {
 	case "lan-movies":
 		for _, it := range idx.Movies {
 			if match(it.Parsed.Title) || match(it.Title) {
-				metas = append(metas, movieMeta(it))
+				metas = append(metas, movieMeta(idx, base, it))
 			}
 		}
 	case "lan-series":
@@ -208,7 +247,7 @@ func handleCatalog(w http.ResponseWriter, r *http.Request) {
 		sort.Slice(shows, func(i, j int) bool { return strings.ToLower(shows[i].Name) < strings.ToLower(shows[j].Name) })
 		for _, sh := range shows {
 			if match(sh.Name) {
-				metas = append(metas, showMeta(sh))
+				metas = append(metas, showMeta(base, sh))
 			}
 		}
 	case "lan-audio":
@@ -219,13 +258,13 @@ func handleCatalog(w http.ResponseWriter, r *http.Request) {
 		sort.Slice(albums, func(i, j int) bool { return strings.ToLower(albums[i].Name) < strings.ToLower(albums[j].Name) })
 		for _, al := range albums {
 			if match(al.Name) || slices.ContainsFunc(al.Tracks, func(t *Item) bool { return match(t.Title) }) {
-				metas = append(metas, albumMeta(al))
+				metas = append(metas, albumMeta(base, al))
 			}
 		}
 	case "lan-playlists":
 		for _, pl := range idx.Playlists {
 			if match(pl.Title) {
-				metas = append(metas, playlistMeta(pl))
+				metas = append(metas, playlistMeta(base, pl))
 			}
 		}
 	}
@@ -243,12 +282,16 @@ func sizeGB(n int64) string { return fmt.Sprintf("%.1f GB", float64(n)/1e9) }
 
 func handleMeta(w http.ResponseWriter, r *http.Request) {
 	idx := current.Load()
+	base := addonBase(r)
 	id := pathID(r, "id")
 	switch {
 	case strings.HasPrefix(id, "lan:m:"):
 		if it := idx.Items[strings.TrimPrefix(id, "lan:m:")]; it != nil {
-			m := movieMeta(it)
+			m := movieMeta(idx, base, it)
 			parts := []string{it.Server}
+			if f := it.folder(); f != "" {
+				parts = append(parts, "📁 "+f)
+			}
 			if it.Resolution != "" {
 				parts = append(parts, it.Resolution)
 			}
@@ -261,7 +304,7 @@ func handleMeta(w http.ResponseWriter, r *http.Request) {
 		}
 	case strings.HasPrefix(id, "lan:a:"):
 		if al := idx.Albums[strings.TrimPrefix(id, "lan:a:")]; al != nil {
-			m := albumMeta(al)
+			m := albumMeta(base, al)
 			videos := []obj{}
 			for i, t := range al.Tracks {
 				videos = append(videos, obj{"id": id + ":" + t.Key, "title": t.Title, "episode": i + 1, "released": "1970-01-01T00:00:00.000Z"})
@@ -272,7 +315,7 @@ func handleMeta(w http.ResponseWriter, r *http.Request) {
 		}
 	case strings.HasPrefix(id, "lan:p:"):
 		if pl := idx.Items[strings.TrimPrefix(id, "lan:p:")]; pl != nil && pl.Kind == "playlist" {
-			m := playlistMeta(pl)
+			m := playlistMeta(base, pl)
 			videos := []obj{}
 			for i, e := range pl.Entries {
 				t := e.Title
@@ -287,23 +330,20 @@ func handleMeta(w http.ResponseWriter, r *http.Request) {
 		}
 	case strings.HasPrefix(id, "lan:s:"):
 		if sh := idx.Shows[strings.TrimPrefix(id, "lan:s:")]; sh != nil {
-			m := showMeta(sh)
-			keys := make([][2]int, 0, len(sh.Episodes))
-			for k := range sh.Episodes {
-				keys = append(keys, k)
-			}
-			sort.Slice(keys, func(i, j int) bool {
-				return keys[i][0] < keys[j][0] || keys[i][0] == keys[j][0] && keys[i][1] < keys[j][1]
-			})
+			m := showMeta(base, sh)
 			videos := []obj{}
-			for _, k := range keys {
-				videos = append(videos, obj{
+			for _, k := range episodeKeys(sh) {
+				v := obj{
 					"id":       fmt.Sprintf("lan:s:%s:%d:%d", sh.Slug, k[0], k[1]),
 					"title":    fmt.Sprintf("S%02dE%02d", k[0], k[1]),
 					"season":   k[0],
 					"episode":  k[1],
 					"released": "1970-01-01T00:00:00.000Z",
-				})
+				}
+				if t := episodeThumb(base, sh, k); t != "" {
+					v["thumbnail"] = t
+				}
+				videos = append(videos, v)
 			}
 			m["videos"] = videos
 			writeJSON(w, obj{"meta": m}, true)
@@ -452,6 +492,9 @@ func itemStream(r *http.Request, it *Item) obj {
 		info = append(info, it.Resolution)
 	}
 	title := it.DisplayName()
+	if f := it.folder(); f != "" {
+		title += "\n📁 " + f
+	}
 	if len(info) > 0 {
 		title += "\n" + strings.Join(info, " · ")
 	}
@@ -511,6 +554,12 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// sameServer: u is on the same server as root.
+func sameServer(u *url.URL, root string) bool {
+	r, err := url.Parse(root)
+	return err == nil && sameHost(u, r)
+}
+
 // proxyTo streams it.URL; Range/If-Range go upstream and 206/Content-Range come back untouched.
 func proxyTo(w http.ResponseWriter, r *http.Request, it *Item, l Login) {
 	target, err := url.Parse(it.URL)
@@ -523,7 +572,7 @@ func proxyTo(w http.ResponseWriter, r *http.Request, it *Item, l Login) {
 			pr.Out.URL = target
 			pr.Out.Host = ""
 			pr.Out.Header.Del("Authorization")
-			if l.User != "" {
+			if l.User != "" && sameServer(target, it.DAVRoot) { // never hand the login to another host
 				pr.Out.SetBasicAuth(l.User, l.Pass)
 			}
 		},

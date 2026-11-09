@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -113,5 +114,35 @@ func TestMigrateSettings(t *testing.T) {
 	}
 	if s.SFTP != nil || s.Allowed != nil || s.Disabled != nil || migrateSettings(&s) {
 		t.Error("old fields not cleared, or migrated twice")
+	}
+}
+
+// A finished index doesn't hold the one before it: otherwise every scheduled
+// scan would keep the whole previous library in memory, forever.
+func TestBuildDropsPrev(t *testing.T) {
+	cfg = Config{MaxDepth: 12}
+	settings, settingsFile, db = Settings{}, "", nil
+	current.Store(newIndex())
+	for range 2 {
+		idx := build(context.Background(), true)
+		if idx.prev != nil {
+			t.Fatal("index keeps the previous one")
+		}
+		current.Store(idx)
+	}
+}
+
+func TestEmptyIDRefused(t *testing.T) {
+	settings, settingsFile, db = Settings{}, "", nil
+	initSecrets()
+	h := routes()
+	drainJobs()
+	for _, p := range []string{"/api/hosts/remove", "/api/sources/rescan"} {
+		if code, _ := post(t, h, p, `{}`); code != 400 {
+			t.Errorf("%s without id → %d, want 400", p, code)
+		}
+	}
+	if len(jobs) != 0 {
+		t.Error("empty id queued a scan")
 	}
 }

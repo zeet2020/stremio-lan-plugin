@@ -4,7 +4,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestAuth(t *testing.T) {
@@ -90,5 +92,37 @@ func TestAuth(t *testing.T) {
 	}
 	if got := do("GET", "/"+getSettings().AddonToken+"/manifest.json", "", nil).Code; got != 200 {
 		t.Errorf("new token → %d", got)
+	}
+}
+
+// Wrong passwords are checked one at a time: parallel guesses don't go faster.
+func TestLoginGuessesSerialized(t *testing.T) {
+	cfg = Config{}
+	settings, settingsFile = Settings{}, ""
+	initSecrets()
+	h := routes()
+	req := func(path, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("POST", path, strings.NewReader(body))
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		return rec
+	}
+	if rec := req("/api/setup", `{"password":"correct horse"}`); rec.Code != 204 {
+		t.Fatalf("setup → %d", rec.Code)
+	}
+	start := time.Now()
+	var wg sync.WaitGroup
+	for range 3 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if rec := req("/api/login", `{"password":"guess"}`); rec.Code != 401 {
+				t.Errorf("wrong password → %d", rec.Code)
+			}
+		}()
+	}
+	wg.Wait()
+	if took := time.Since(start); took < 3*time.Second {
+		t.Errorf("3 parallel wrong guesses took %s; want ≥ 3s (one at a time)", took)
 	}
 }

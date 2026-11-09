@@ -29,7 +29,9 @@ func serveTLS(h http.Handler) {
 	}
 	addr := net.JoinHostPort(cfg.Bind, strconv.Itoa(cfg.HTTPSPort))
 	log.Printf("listening on https://%s", addr)
-	log.Fatal(http.ListenAndServeTLS(addr, certFile, keyFile, h))
+	srv := newServer(h)
+	srv.Addr = addr
+	log.Fatal(srv.ListenAndServeTLS(certFile, keyFile))
 }
 
 func genCert(dir, certFile, keyFile string) error {

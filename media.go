@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -23,6 +24,10 @@ var audioExts = map[string]bool{
 	".mp3": true, ".flac": true, ".m4a": true, ".aac": true, ".ogg": true,
 	".opus": true, ".wav": true, ".wma": true,
 }
+
+// reSample: "sample" as its own word (Movie.sample.mkv, sample-movie.mkv),
+// not inside one ("The Sampler").
+var reSample = regexp.MustCompile(`(?i)(^|[^a-z])sample([^a-z]|$)`)
 
 var playlistExts = map[string]bool{".m3u": true, ".m3u8": true, ".pls": true}
 
@@ -37,7 +42,7 @@ func classify(name string, size int64) string {
 	ext := strings.ToLower(path.Ext(name))
 	switch {
 	case videoExts[ext]:
-		if strings.Contains(strings.ToLower(name), "sample") || ext == ".ts" && size < 1<<20 {
+		if reSample.MatchString(name) || ext == ".ts" && size < 1<<20 {
 			return ""
 		}
 		return "video"
@@ -214,6 +219,9 @@ func (d *bdecoder) value() (any, error) {
 			}
 			l = append(l, v)
 		}
+		if d.i >= len(d.b) {
+			return nil, errors.New("truncated torrent")
+		}
 		d.i++
 		return l, nil
 	case c == 'd':
@@ -233,6 +241,9 @@ func (d *bdecoder) value() (any, error) {
 				d.infoStart, d.infoEnd = start, d.i
 			}
 			m[k] = v
+		}
+		if d.i >= len(d.b) {
+			return nil, errors.New("truncated torrent")
 		}
 		d.i++
 		return m, nil

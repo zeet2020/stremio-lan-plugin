@@ -14,6 +14,7 @@ description: |
   panel on port 7070. Runs as a locked-down systemd service.
 homepage: https://github.com/${GITHUB_REPOSITORY}
 license: MIT
+suggests: [ffmpegthumbnailer, ffmpeg] # optional: Settings → Generate thumbnails
 contents:
   - src: ./build/pkg/stremio-lan   # staged per arch by the release workflow
     dst: /usr/bin/stremio-lan
