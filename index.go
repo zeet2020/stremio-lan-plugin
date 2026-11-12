@@ -202,13 +202,17 @@ func key(s string) string {
 	return hex.EncodeToString(sum[:])[:12]
 }
 
+// dlnaItem is nil unless the resource is an http(s) URL: it goes to ffmpeg and
+// the stream proxy, which must not be handed file:, concat: and the like.
 func dlnaItem(srv *Server, di *didlItem, r *didlRes) *Item {
+	u, err := url.Parse(r.URL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return nil
+	}
 	it := &Item{
 		Key: key(srv.UDN + r.URL), Server: srv.Name, Title: strings.TrimSpace(di.Title),
 		URL: r.URL, Size: r.Size, Duration: r.Duration, Resolution: r.Resolution, Poster: strings.TrimSpace(di.AlbumArt),
-	}
-	if u, err := url.Parse(r.URL); err == nil {
-		it.FileName = path.Base(u.Path)
+		FileName: path.Base(u.Path),
 	}
 	return it
 }
@@ -307,6 +311,9 @@ func (idx *Index) add(it *Item) {
 		p = parse(it.Title)
 	}
 	it.Parsed = p
+	if idx.Items[it.Key] != nil { // same file reached twice (overlapping folders, reused WebDAV folder)
+		return
+	}
 	idx.Items[it.Key] = it
 	idx.All = append(idx.All, it)
 

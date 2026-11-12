@@ -16,7 +16,7 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/events"
 )
 
-//go:embed build/appicon.png
+//go:embed packaging/appicon.png
 var appIcon []byte
 
 // main runs the desktop app: the same server as the service, plus a native

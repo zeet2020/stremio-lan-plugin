@@ -114,7 +114,7 @@ jobs:
       - name: Package
         run: |
           mkdir -p dist
-          tar -czf "dist/stremio-lan-desktop-$VERSION-linux-amd64.tar.gz" stremio-lan-desktop deploy/stremio-lan.desktop build/appicon.png LICENSE
+          tar -czf "dist/stremio-lan-desktop-$VERSION-linux-amd64.tar.gz" stremio-lan-desktop packaging/stremio-lan.desktop packaging/appicon.png LICENSE
           packaging/appimage.sh
           ls -la dist
       - uses: actions/upload-artifact@v4
@@ -141,7 +141,7 @@ jobs:
         shell: bash
         run: |
           go install github.com/tc-hib/go-winres@latest
-          go-winres simply --icon build/appicon.png --manifest gui --product-name "Stremio LAN Library" \
+          go-winres simply --icon packaging/appicon.png --manifest gui --product-name "Stremio LAN Library" \
             --file-version "${VERSION%%-*}" --product-version "${VERSION%%-*}"
           CGO_ENABLED=0 go build -tags desktop -trimpath -ldflags "$GO_LDFLAGS -H windowsgui -X main.version=$VERSION" -o stremio-lan-desktop.exe .
           mkdir -p dist

@@ -268,10 +268,7 @@ func handleCatalog(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if skip > len(metas) {
-		skip = len(metas)
-	}
-	metas = metas[skip:]
+	metas = metas[max(0, min(skip, len(metas))):]
 	if len(metas) > 100 {
 		metas = metas[:100]
 	}

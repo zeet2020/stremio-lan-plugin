@@ -7,9 +7,9 @@ version=${VERSION:?set VERSION}
 appdir=build/AppDir
 rm -rf "$appdir"
 install -Dm755 stremio-lan-desktop "$appdir/usr/bin/stremio-lan-desktop"
-install -Dm644 deploy/stremio-lan.desktop "$appdir/stremio-lan.desktop"
-install -Dm644 build/appicon.png "$appdir/stremio-lan.png"
-install -Dm644 build/appicon.png "$appdir/usr/share/icons/hicolor/512x512/apps/stremio-lan.png"
+install -Dm644 packaging/stremio-lan.desktop "$appdir/stremio-lan.desktop"
+install -Dm644 packaging/appicon.png "$appdir/stremio-lan.png"
+install -Dm644 packaging/appicon.png "$appdir/usr/share/icons/hicolor/512x512/apps/stremio-lan.png"
 cat > "$appdir/AppRun" <<'RUN'
 #!/bin/sh
 exec "$(dirname "$(readlink -f "$0")")/usr/bin/stremio-lan-desktop" "$@"

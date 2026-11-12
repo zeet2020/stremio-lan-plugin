@@ -1,5 +1,4 @@
-# systemd unit shipped in the deb/rpm. (deploy/stremio-lan.service is the
-# hand-install variant for a Pi user account.)
+# systemd unit shipped in the deb/rpm.
 [Unit]
 Description=Stremio LAN Library: DLNA/SMB/WebDAV/SFTP videos for Stremio
 After=network-online.target

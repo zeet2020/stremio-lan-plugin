@@ -22,9 +22,9 @@ contents:
   - src: ./stremio-lan-desktop
     dst: /usr/bin/stremio-lan-desktop
     file_info: { mode: 0755 }
-  - src: ./deploy/stremio-lan.desktop
+  - src: ./packaging/stremio-lan.desktop
     dst: /usr/share/applications/stremio-lan.desktop
-  - src: ./build/appicon.png
+  - src: ./packaging/appicon.png
     dst: /usr/share/icons/hicolor/512x512/apps/stremio-lan.png
   - src: ./LICENSE
     dst: /usr/share/doc/stremio-lan-desktop/LICENSE

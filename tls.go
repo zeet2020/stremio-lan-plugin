@@ -17,10 +17,9 @@ import (
 	"time"
 )
 
-// serveTLS serves h on HTTPS_PORT with a self-signed cert kept in ~/.stremio-lan.
+// serveTLS serves h on HTTPS_PORT with a self-signed cert kept next to settings.json.
 func serveTLS(h http.Handler) {
-	home, _ := os.UserHomeDir()
-	dir := filepath.Join(home, ".stremio-lan")
+	dir := filepath.Dir(settingsFile)
 	certFile, keyFile := filepath.Join(dir, "cert.pem"), filepath.Join(dir, "key.pem")
 	if _, err := os.Stat(certFile); err != nil {
 		if err := genCert(dir, certFile, keyFile); err != nil {

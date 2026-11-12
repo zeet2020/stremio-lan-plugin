@@ -93,9 +93,9 @@ func runScan(id string, scan func() *Index) {
 // publish makes idx current (minus anything switched off meanwhile) and saves it.
 func publish(idx *Index) {
 	publishMu.Lock()
+	defer publishMu.Unlock() // saved inside the lock too: an older index can't be written last
 	idx = withoutHidden(idx, getSettings())
 	current.Store(idx)
-	publishMu.Unlock()
 	if err := saveIndex(idx); err != nil {
 		log.Printf("library db: save: %v", err)
 	}

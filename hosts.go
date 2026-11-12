@@ -375,6 +375,9 @@ func (idx *Index) walkDLNA(srv *Server, root string, seen map[string]bool) error
 			}
 			seen[r.URL] = true
 			it := dlnaItem(srv, di, r)
+			if it == nil {
+				continue
+			}
 			it.Album = title
 			if audio {
 				it.Kind = "audio"
@@ -453,8 +456,10 @@ func (idx *Index) reuseDAVFolder(dirKey, dirPath, stamp string) bool {
 	if !idx.incremental || p == nil || p.DAVStamps[dirKey] != stamp {
 		return false
 	}
+	// "/Movies" must not match "/Movies 2": compare whole path segments.
+	keyPrefix, pathPrefix := strings.TrimSuffix(dirKey, "/")+"/", strings.TrimSuffix(dirPath, "/")+"/"
 	for k, v := range p.DAVStamps {
-		if strings.HasPrefix(k, dirKey) {
+		if strings.HasPrefix(k, keyPrefix) {
 			idx.DAVStamps[k] = v
 		}
 	}
@@ -462,7 +467,7 @@ func (idx *Index) reuseDAVFolder(dirKey, dirPath, stamp string) bool {
 		if it.SourceID != idx.cur || it.DAVRoot == "" || idx.Items[it.Key] != nil {
 			continue
 		}
-		if u, err := url.Parse(it.URL); err == nil && strings.HasPrefix(u.Path, dirPath) {
+		if u, err := url.Parse(it.URL); err == nil && strings.HasPrefix(u.Path, pathPrefix) {
 			c := *it
 			idx.add(&c)
 		}

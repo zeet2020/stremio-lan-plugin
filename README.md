@@ -41,7 +41,7 @@ sudo apt remove stremio-lan    # settings stay in /var/lib/stremio-lan
 
 ## Set it up
 
-1. Open `http://<machine-ip>:7070/` in a browser and **set an admin password**.
+1. Open `http://<machine-ip>:7070/` in a browser and **set an admin password**. Do this right after installing: until a password is set, anyone on your network who opens the page first can set it.
 2. Click **Add source**, connect to a server (or this machine), tick the folders you want, then **Save and scan**.
 3. Click **Open in Stremio** (or paste the shown link into Stremio → Add-ons). Log in to Stremio with the same account on your TV and phone, and the add-on is there too.
 

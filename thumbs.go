@@ -159,7 +159,9 @@ func thumbURL(base string, it *Item) string {
 // looked up, so the path can't point anywhere else.
 func handleThumb(w http.ResponseWriter, r *http.Request) {
 	k := strings.TrimSuffix(r.PathValue("file"), ".jpg")
-	if !thumbsOn() || current.Load().Items[k] == nil {
+	idx := current.Load()
+	it := idx.Items[k]
+	if !thumbsOn() || it == nil {
 		http.NotFound(w, r)
 		return
 	}
@@ -171,7 +173,7 @@ func handleThumb(w http.ResponseWriter, r *http.Request) {
 		}
 		genThumbs()
 		w.Header().Set("Cache-Control", "no-store")
-		b, err := drawPoster("landscape", thumbTitle(k), "Thumbnail coming")
+		b, err := drawPoster("landscape", thumbTitle(idx, it), "Thumbnail coming")
 		if err != nil {
 			http.NotFound(w, r)
 			return
@@ -186,9 +188,7 @@ func handleThumb(w http.ResponseWriter, r *http.Request) {
 
 // thumbTitle is what a pending thumbnail's stand-in shows: the movie's name,
 // or the show and episode.
-func thumbTitle(k string) string {
-	idx := current.Load()
-	it := idx.Items[k]
+func thumbTitle(idx *Index, it *Item) string {
 	if it.Parsed.Season > 0 {
 		return fmt.Sprintf("%s S%02dE%02d", it.Parsed.Title, it.Parsed.Season, it.Parsed.Episode)
 	}
